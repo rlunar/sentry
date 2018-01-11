@@ -5,11 +5,11 @@ exports[`TextCopyInput renders 1`] = `
   <Styled(Base)
     flex="1"
   >
-    <Styled(AutoSelectText)
-      innerRef={[Function]}
-    >
-      Text to Copy
-    </Styled(AutoSelectText)>
+    <Styled(Component)
+      onClick={[Function]}
+      readOnly={true}
+      value="Text to Copy"
+    />
   </Styled(Base)>
   <Clipboard
     errorMessage="Error copying to clipboard"
