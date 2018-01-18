@@ -2,6 +2,7 @@ from __future__ import absolute_import
 
 from rest_framework import serializers
 
+from sentry.models import Environment
 from sentry.rules import rules
 
 from . import ListField
@@ -38,6 +39,7 @@ class RuleNodeField(serializers.WritableField):
 
 class RuleSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=64)
+    environment = serializers.CharField(max_length=64, required=False)
     actionMatch = serializers.ChoiceField(
         choices=(('all', 'all'), ('any', 'any'), ('none', 'none'), )
     )
@@ -51,6 +53,11 @@ class RuleSerializer(serializers.Serializer):
 
     def save(self, rule):
         rule.project = self.context['project']
+        if self.data.get('environment'):
+            rule.environment_id = Environment.get_or_create(
+                rule.project,
+                self.data['environment'],
+            ).id
         if self.data.get('name'):
             rule.label = self.data['name']
         if self.data.get('actionMatch'):
