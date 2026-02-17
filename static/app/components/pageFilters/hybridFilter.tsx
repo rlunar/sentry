@@ -29,97 +29,82 @@ export interface HybridFilterRef<Value extends SelectKey> {
   toggleOption: (val: Value) => void;
 }
 
-export interface HybridFilterProps<Value extends SelectKey> extends Omit<
-  MultipleSelectProps<Value>,
-  | 'grid'
-  | 'multiple'
-  | 'value'
-  | 'defaultValue'
-  | 'onChange'
-  | 'clearable'
-  | 'onClear'
-  | 'onInteractOutside'
-  | 'closeOnSelect'
-  | 'onKeyDown'
-  | 'onKeyUp'
-  | 'onToggle'
-> {
-  /**
-   * Default selection value. When the user clicks "Reset", the selection value will
-   * return to this value.
-   */
+export interface UseStagedCompactSelectOptions<Value extends SelectKey> {
   defaultValue: Value[];
   onChange: (selected: Value[]) => void;
   value: Value[];
-  /**
-   * Whether to disable the commit action in multiple selection mode. When true, the
-   * apply button will be disabled and clicking outside will revert to previous value.
-   * Useful for things like enforcing a selection count limit.
-   */
   disableCommit?: boolean;
-  /**
-   * Additional staged changes from external state that should trigger
-   * the Apply/Cancel buttons.
-   */
   hasExternalChanges?: boolean;
-  /**
-   * Message to show in the menu footer
-   */
-  menuFooterMessage?: ((hasStagedChanges: any) => React.ReactNode) | React.ReactNode;
   multiple?: boolean;
   onReplace?: (selected: Value) => void;
-  /**
-   * Called when the reset button is clicked.
-   */
   onReset?: () => void;
-  /**
-   * Similar to onChange, but is called when the internal staged value changes (see
-   * `stagedValue` below).
-   */
+  onSectionToggle?: (section: SelectSection<SelectKey>) => void;
   onStagedValueChange?: (selected: Value[]) => void;
   onToggle?: (selected: Value[]) => void;
-  ref?: React.Ref<HybridFilterRef<Value>>;
-  storageNamespace?: string;
+}
+
+export interface UseStagedCompactSelectReturn<Value extends SelectKey> {
+  // Additional state and utilities
+  commit: (val: Value[]) => void;
+  // Props that can be spread directly into CompactSelect
+  compactSelectProps: Pick<
+    MultipleSelectProps<Value>,
+    | 'value'
+    | 'onChange'
+    | 'onSectionToggle'
+    | 'onInteractOutside'
+    | 'onKeyDown'
+    | 'onKeyUp'
+  > & {
+    closeOnSelect: boolean;
+  };
+  defaultValue: Value[];
+  handleReset: () => void;
+  hasStagedChanges: boolean;
+  modifierKeyPressed: boolean;
+  removeStagedChanges: () => void;
+  shouldShowReset: boolean;
+  stagedValue: Value[];
+  toggleOption: (val: Value) => void;
+  disableCommit?: boolean;
 }
 
 /**
- * A special filter component with "hybrid" (both single and multiple) selection, made
- * specifically for page filters. Clicking on an option will select only that option
- * (single selection). Command/ctrl-clicking on an option or clicking on its checkbox
- * will add the option to the selection state (multiple selection).
- *
- * Note: this component is controlled only — changes must be handled via the `onChange`
- * callback.
+ * Hook that encapsulates the state management and business logic for staged compact select.
+ * Manages staged values, modifier key detection, and commit/cancel logic for hybrid
+ * (single + multiple) selection mode.
  */
-export function HybridFilter<Value extends SelectKey>({
-  ref,
-  options,
-  multiple,
+export function useStagedCompactSelect<Value extends SelectKey>({
   value,
   defaultValue,
-  onReset,
   onChange,
   onStagedValueChange,
-  onSectionToggle,
-  onReplace,
   onToggle,
-  menuFooter,
-  menuFooterMessage,
+  onReplace,
+  onReset,
+  onSectionToggle,
+  multiple,
   disableCommit,
   hasExternalChanges = false,
-  ...selectProps
-}: HybridFilterProps<Value>) {
+}: UseStagedCompactSelectOptions<Value>): UseStagedCompactSelectReturn<Value> {
   /**
-   * An internal set of staged, uncommitted values. In multiple selection mode (the user
+   * An internal set of uncommitted staged values. In multiple selection mode (the user
    * command/ctrl-clicked on an option or clicked directly on a checkbox), changes
    * aren't committed right away. They are stored as a temporary set of staged values
    * that can be reset by clicking "Cancel" or committed by clicking "Apply".
+   *
+   * When null, there are no uncommitted changes and we use the prop `value` directly.
    */
-  const [stagedValue, setStagedValue] = useState<Value[]>([]);
+  const [uncommittedStagedValue, setUncommittedStagedValue] = useState<Value[] | null>(
+    null
+  );
 
-  // Update `stagedValue` whenever the external `value` changes
-  // eslint-disable-next-line react-you-might-not-need-an-effect/no-derived-state
-  useEffect(() => setStagedValue(value), [value]);
+  /**
+   * The actual staged value to display. This is derived from:
+   * - uncommittedStagedValue (if the user has made uncommitted changes)
+   * - value prop (if there are no uncommitted changes)
+   */
+  const stagedValue = uncommittedStagedValue ?? value;
 
   useEffect(() => {
     onStagedValueChange?.(stagedValue);
@@ -136,13 +121,13 @@ export function HybridFilter<Value extends SelectKey>({
 
   const commit = useCallback(
     (val: Value[]) => {
-      setStagedValue(val); // reset staged value
+      setUncommittedStagedValue(null);
       onChange?.(val);
     },
     [onChange]
   );
 
-  const removeStagedChanges = useCallback(() => setStagedValue(value), [value]);
+  const removeStagedChanges = useCallback(() => setUncommittedStagedValue(null), []);
 
   const commitStagedChanges = useCallback(() => {
     if (disableCommit) {
@@ -155,31 +140,27 @@ export function HybridFilter<Value extends SelectKey>({
 
   const toggleOption = useCallback(
     (val: Value) => {
-      setStagedValue(cur => {
-        const newSet = new Set(cur);
-        if (newSet.has(val)) {
-          newSet.delete(val);
-        } else {
-          newSet.add(val);
-        }
+      const newSet = new Set(stagedValue);
+      if (newSet.has(val)) {
+        newSet.delete(val);
+      } else {
+        newSet.add(val);
+      }
 
-        const newValue = [...newSet];
-        onToggle?.(newValue);
-        return newValue;
-      });
+      const newValue = [...newSet];
+      setUncommittedStagedValue(newValue);
+      onToggle?.(newValue);
     },
-    [onToggle]
+    [stagedValue, onToggle]
   );
-
-  useImperativeHandle(ref, () => ({toggleOption}), [toggleOption]);
 
   /**
    * Whether a modifier key (ctrl/alt/shift) is being pressed. If true, the selector is
    * in multiple selection mode.
    */
   const [modifierKeyPressed, setModifierKeyPressed] = useState(false);
-  const onKeyUp = useCallback(() => setModifierKeyPressed(false), []);
-  const onKeyDown = useCallback(
+  const handleKeyUp = useCallback(() => setModifierKeyPressed(false), []);
+  const handleKeyDown = useCallback(
     (e: any) => {
       if (e.key === 'Escape') {
         commitStagedChanges();
@@ -188,6 +169,120 @@ export function HybridFilter<Value extends SelectKey>({
     },
     [commitStagedChanges]
   );
+
+  const sectionToggleWasPressed = useRef(false);
+  const handleSectionToggle = useCallback(
+    (section: SelectSection<SelectKey>) => {
+      onSectionToggle?.(section);
+      sectionToggleWasPressed.current = true;
+    },
+    [onSectionToggle]
+  );
+
+  const handleChange = useCallback(
+    (selectedOptions: Array<SelectOption<Value>>) => {
+      const oldValue = stagedValue;
+      const newValue = selectedOptions.map(op => op.value);
+      const oldValueSet = new Set(oldValue);
+      const newValueSet = new Set(newValue);
+
+      // Find out which options were added/removed by comparing the old and new value
+      newValueSet.forEach(val => {
+        if (oldValueSet.has(val)) {
+          newValueSet.delete(val);
+          oldValueSet.delete(val);
+        }
+      });
+      const diff = newValueSet.size > 0 ? [...newValueSet] : [...oldValueSet];
+
+      // A section toggle button was clicked
+      if (diff.length > 1 || sectionToggleWasPressed.current) {
+        sectionToggleWasPressed.current = false;
+        commit(newValue);
+        return;
+      }
+
+      // A modifier key is being pressed --> enter multiple selection mode
+      if (multiple && modifierKeyPressed) {
+        toggleOption(diff[0]!);
+        return;
+      }
+
+      // Only one option was clicked on --> use single, direct selection mode
+      onReplace?.(diff[0]!);
+      commit(diff);
+    },
+    [commit, stagedValue, toggleOption, onReplace, multiple, modifierKeyPressed]
+  );
+
+  // Don't show reset button if current value is already equal to the default one.
+  const shouldShowReset = xor(stagedValue, defaultValue).length > 0;
+
+  const handleReset = useCallback(() => {
+    commit(defaultValue);
+    onReset?.();
+  }, [commit, defaultValue, onReset]);
+
+  return {
+    compactSelectProps: {
+      value: stagedValue,
+      onChange: handleChange,
+      onSectionToggle: handleSectionToggle,
+      onInteractOutside: commitStagedChanges,
+      onKeyDown: handleKeyDown,
+      onKeyUp: handleKeyUp,
+      closeOnSelect: !(multiple && modifierKeyPressed),
+    },
+    defaultValue,
+    handleReset,
+    stagedValue,
+    hasStagedChanges,
+    modifierKeyPressed,
+    commit,
+    removeStagedChanges,
+    shouldShowReset,
+    toggleOption,
+    disableCommit,
+  };
+}
+
+export interface HybridFilterProps<Value extends SelectKey> extends Omit<
+  MultipleSelectProps<Value>,
+  'value' | 'onChange' | 'grid' | 'multiple'
+> {
+  /**
+   * The staged selection state manager from useStagedCompactSelect.
+   * This handles all the state management and provides props for CompactSelect.
+   */
+  stagedSelect: UseStagedCompactSelectReturn<Value>;
+  /**
+   * Message to show in the menu footer. Can be a function that receives
+   * whether there are staged changes.
+   */
+  menuFooterMessage?: ((hasStagedChanges: boolean) => React.ReactNode) | React.ReactNode;
+  ref?: React.Ref<HybridFilterRef<Value>>;
+}
+
+/**
+ * A special filter component with "hybrid" (both single and multiple) selection, made
+ * specifically for page filters. Clicking on an option will select only that option
+ * (single selection). Command/ctrl-clicking on an option or clicking on its checkbox
+ * will add the option to the selection state (multiple selection).
+ *
+ * Note: this component is controlled only — changes must be handled via the `onChange`
+ * callback.
+ */
+export function HybridFilter<Value extends SelectKey>({
+  ref,
+  options,
+  menuFooter,
+  menuFooterMessage,
+  stagedSelect,
+  ...selectProps
+}: HybridFilterProps<Value>) {
+  useImperativeHandle(ref, () => ({toggleOption: stagedSelect.toggleOption}), [
+    stagedSelect.toggleOption,
+  ]);
 
   const mappedOptions = useMemo<Array<SelectOptionOrSection<Value>>>(() => {
     const mapOption = (option: SelectOption<Value>): SelectOption<Value> => ({
@@ -244,23 +339,23 @@ export function HybridFilter<Value extends SelectKey>({
   const renderFooter = useMemo(() => {
     const footerMessage =
       typeof menuFooterMessage === 'function'
-        ? menuFooterMessage(hasStagedChanges)
+        ? menuFooterMessage(stagedSelect.hasStagedChanges)
         : menuFooterMessage;
 
-    return menuFooter || footerMessage || hasStagedChanges
+    return menuFooter || footerMessage || stagedSelect.hasStagedChanges
       ? ({closeOverlay}: any) => (
           <Fragment>
             {footerMessage && <FooterMessage>{footerMessage}</FooterMessage>}
             <FooterWrap>
               <FooterInnerWrap>{menuFooter as React.ReactNode}</FooterInnerWrap>
-              {hasStagedChanges && (
+              {stagedSelect.hasStagedChanges && (
                 <FooterInnerWrap>
                   <Button
                     priority="transparent"
                     size="xs"
                     onClick={() => {
                       closeOverlay();
-                      removeStagedChanges();
+                      stagedSelect.removeStagedChanges();
                     }}
                   >
                     {t('Cancel')}
@@ -268,10 +363,10 @@ export function HybridFilter<Value extends SelectKey>({
                   <Button
                     size="xs"
                     priority="primary"
-                    disabled={disableCommit}
+                    disabled={stagedSelect.disableCommit}
                     onClick={() => {
                       closeOverlay();
-                      commit(stagedValue);
+                      stagedSelect.commit(stagedSelect.stagedValue);
                     }}
                   >
                     {t('Apply')}
@@ -282,73 +377,18 @@ export function HybridFilter<Value extends SelectKey>({
           </Fragment>
         )
       : null;
-  }, [
-    commit,
-    stagedValue,
-    removeStagedChanges,
-    menuFooter,
-    menuFooterMessage,
-    hasStagedChanges,
-    disableCommit,
-  ]);
-
-  const sectionToggleWasPressed = useRef(false);
-  const handleSectionToggle = useCallback(
-    (section: SelectSection<SelectKey>) => {
-      onSectionToggle?.(section);
-      sectionToggleWasPressed.current = true;
-    },
-    [onSectionToggle]
-  );
-
-  const handleChange = useCallback(
-    (selectedOptions: Array<SelectOption<Value>>) => {
-      const oldValue = stagedValue;
-      const newValue = selectedOptions.map(op => op.value);
-      const oldValueSet = new Set(oldValue);
-      const newValueSet = new Set(newValue);
-
-      // Find out which options were added/removed by comparing the old and new value
-      newValueSet.forEach(val => {
-        if (oldValueSet.has(val)) {
-          newValueSet.delete(val);
-          oldValueSet.delete(val);
-        }
-      });
-      const diff = newValueSet.size > 0 ? [...newValueSet] : [...oldValueSet];
-
-      // A section toggle button was clicked
-      if (diff.length > 1 || sectionToggleWasPressed.current) {
-        sectionToggleWasPressed.current = false;
-        commit(newValue);
-        return;
-      }
-
-      // A modifier key is being pressed --> enter multiple selection mode
-      if (multiple && modifierKeyPressed) {
-        toggleOption(diff[0]!);
-        return;
-      }
-
-      // Only one option was clicked on --> use single, direct selection mode
-      onReplace?.(diff[0]!);
-      commit(diff);
-    },
-    [commit, stagedValue, toggleOption, onReplace, multiple, modifierKeyPressed]
-  );
+  }, [stagedSelect, menuFooter, menuFooterMessage]);
 
   const menuHeaderTrailingItems = useCallback(
     ({closeOverlay}: any) => {
-      // Don't show reset button if current value is already equal to the default one.
-      if (!xor(stagedValue, defaultValue).length) {
+      if (!stagedSelect.shouldShowReset) {
         return null;
       }
 
       return (
         <ResetButton
           onClick={() => {
-            commit(defaultValue);
-            onReset?.();
+            stagedSelect.handleReset();
             closeOverlay();
           }}
           size="zero"
@@ -358,23 +398,17 @@ export function HybridFilter<Value extends SelectKey>({
         </ResetButton>
       );
     },
-    [onReset, commit, stagedValue, defaultValue]
+    [stagedSelect]
   );
 
   return (
     <CompactSelect
       grid
       multiple
-      closeOnSelect={!(multiple && modifierKeyPressed)}
       menuHeaderTrailingItems={menuHeaderTrailingItems}
       options={mappedOptions}
-      value={stagedValue}
-      onChange={handleChange}
-      onSectionToggle={handleSectionToggle}
-      onInteractOutside={commitStagedChanges}
       menuFooter={renderFooter}
-      onKeyDown={onKeyDown}
-      onKeyUp={onKeyUp}
+      {...stagedSelect.compactSelectProps}
       {...selectProps}
     />
   );
